@@ -162,16 +162,25 @@ namespace GmodItemExtractor
 
         public static Process GmoshCommand(params string[] param)
         {
-            Process p = new Process
+            Process process = new Process
             {
                 StartInfo =
                 {
                     FileName = _gmoshPath,
-                    Arguments = string.Join(" ", param)
+                    Arguments = string.Join(" ", param),
+                    RedirectStandardOutput = true,
+                    UseShellExecute = false
                 }
             };
-            p.Start();
-            return p;
+            process.Start();
+            
+            StreamReader reader = process.StandardOutput;
+            reader.ReadToEnd();
+
+            process.WaitForExit();
+            process.Close();
+
+            return process;
         }
 
         private static List<string> _filesFound;
@@ -252,21 +261,32 @@ namespace GmodItemExtractor
 
         private static void Main(string[] args)
         {
-            try
-            {
+            if (Debugger.IsAttached)
                 RunProgram();
-            }
-            catch (Exception e)
+            else
             {
-                Console.WriteLine(e.ToString());
+                try
+                {
+                    RunProgram();
+                }
+                catch (Exception e)
+                {
+                    Console.WriteLine(e.ToString());
+                }
             }
             Console.Read();
         }
         private static void RunProgram()
         {
             _tempPath = Path.Combine(Path.GetTempPath(), "gmoditemextractor");
-            if(Directory.Exists(_tempPath))
-                Directory.Delete(_tempPath, true);
+            try
+            {
+                if (Directory.Exists(_tempPath))
+                    Directory.Delete(_tempPath, true);
+            }
+            catch (IOException)
+            {
+            }
 
             Pl("Welcome to this tool made by Donkie.\nIt's designed to help you extract the correct model and materials related to said model from a Garrysmod workshop addon.");
 
@@ -282,9 +302,7 @@ GetAddonPath:
 
             Pl("Extracting GMA...");
             GmoshCommand($"-e \"{addonPath}\"", $"\"{_tempPath}\"");
-
-            Thread.Sleep(1000);
-
+            
             if (!Directory.Exists(_tempPath) || Directory.GetDirectories(_tempPath).Length == 0)
             {
                 Pl("GMA Extraction failed. Try again.");
