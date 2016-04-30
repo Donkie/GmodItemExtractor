@@ -261,20 +261,25 @@ namespace GmodItemExtractor
 
         private static void Main(string[] args)
         {
-            if (Debugger.IsAttached)
-                RunProgram();
-            else
+            while (true)
             {
-                try
-                {
+                if (Debugger.IsAttached)
                     RunProgram();
-                }
-                catch (Exception e)
+                else
                 {
-                    Console.WriteLine(e.ToString());
+                    try
+                    {
+                        RunProgram();
+                    }
+                    catch (Exception e)
+                    {
+                        Console.WriteLine(e.ToString());
+                        break;
+                    }
                 }
+                if (YesNo("Do you want to quit?"))
+                    break;
             }
-            Console.Read();
         }
         private static void RunProgram()
         {

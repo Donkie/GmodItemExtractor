@@ -13,10 +13,10 @@ namespace GmodItemExtractor
     {
         public static string[] GetTextureFiles(string vmtdata)
         {
-            const string regex = @"\$\w*(?:texture|bumpmap|detail|mask)["" \t]+([^\r\n""]+)";
+            Regex r = new Regex(@"\$\w*(?:texture|bumpmap|detail|mask)["" \t]+([^\r\n""]+)", RegexOptions.IgnoreCase);
 
             return (
-                from Match m in Regex.Matches(vmtdata, regex)
+                from Match m in r.Matches(vmtdata)
                 where m.Groups.Count > 1
                 select Program.CleanPath(Path.ChangeExtension(Path.Combine("materials", m.Groups[1].Value), ".vtf"))
             ).ToArray();
