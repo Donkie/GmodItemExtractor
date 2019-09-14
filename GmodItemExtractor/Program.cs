@@ -1,20 +1,23 @@
-﻿using System;
+﻿#region
+
+using System;
 using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
+using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading;
-using System.Windows;
+
+#endregion
 
 namespace GmodItemExtractor
 {
-    internal class Program
+    class Program
     {
-
         private static string _addonsPath;
-        private static string _gmoshPath;
+
+        private static string _tempPath;
 
         public static void P(string s, params object[] param)
         {
@@ -71,6 +74,7 @@ namespace GmodItemExtractor
                         {
                             if (Directory.Exists(input))
                             {
+                                addonsPath = input;
                                 Properties.Settings.Default.addonspath = input;
                                 Properties.Settings.Default.Save();
                                 break;
@@ -91,116 +95,48 @@ namespace GmodItemExtractor
             return addonsPath;
         }
 
-        private static string StartupGmoshPath()
-        {
-            string gmoshPath = Properties.Settings.Default.gmoshpath;
-            if (!File.Exists(gmoshPath))
-            {
-                Pl("This program depends on GMosh. Download here: https://github.com/FPtje/gmosh When downloaded, type in the link to the exe here. (C:\\Program Files\\gmosh\\bin\\gmosh.exe)");
-                while (true)
-                {
-                    string input = Console.ReadLine();
-                    if (input != null)
-                    {
-                        input = CleanPath(input);
-
-                        Pl("Parsed path\n{0}", input);
-                        if (YesNo("Is this correct?"))
-                        {
-                            if (File.Exists(input) && Path.GetFileName(input) == "gmosh.exe")
-                            {
-                                Properties.Settings.Default.gmoshpath = input;
-                                Properties.Settings.Default.Save();
-                                break;
-                            }
-
-                            Pl("Invalid file!");
-                        }
-                    }
-
-                    Pl("Try again.");
-                }
-            }
-            else
-            {
-                Pl("Gmosh path set to\n{0}", gmoshPath);
-            }
-
-            return gmoshPath;
-        }
-
-        private static string getAddonPath()
+        private static string GetAddonPath()
         {
             string[] addons = Directory.GetFiles(_addonsPath).Where(p => Path.GetExtension(p) == ".gma").ToArray();
 
             Pl("Here is a list of all workshop addons I found installed:");
-            for (int i = 0; i < addons.Length; i++)
-            {
-                Pl("({0}): {1}", i, Path.GetFileNameWithoutExtension(addons[i]));
-            }
+            for (int i = 0; i < addons.Length; i++) Pl("({0}): {1}", i, Path.GetFileNameWithoutExtension(addons[i]));
+
             Pl("\nType in the left-hand-side number of the addon you're interested in.");
 
             string addonPath;
             while (true)
             {
                 string input = Console.ReadLine();
-                int output;
-                if (int.TryParse(input, out output))
-                {
+                if (int.TryParse(input, out int output))
                     if (output >= 0 && output < addons.Length)
                     {
                         addonPath = addons[output];
                         break;
                     }
-                }
+
                 Pl("Try again.");
             }
+
             Pl("{0} selected.\n", Path.GetFileNameWithoutExtension(addonPath));
 
             return addonPath;
         }
 
-        public static Process GmoshCommand(params string[] param)
-        {
-            Process process = new Process
-            {
-                StartInfo =
-                {
-                    FileName = _gmoshPath,
-                    Arguments = string.Join(" ", param),
-                    RedirectStandardOutput = true,
-                    UseShellExecute = false
-                }
-            };
-            process.Start();
-            
-            StreamReader reader = process.StandardOutput;
-            reader.ReadToEnd();
-
-            process.WaitForExit();
-            process.Close();
-
-            return process;
-        }
-
-        private static List<string> _filesFound;
-        private static void DirSearch(string path)
+        private static void DirSearch(string path, List<string> filesFound)
         {
             foreach (string d in Directory.GetDirectories(path))
             {
-                foreach (string f in Directory.GetFiles(d))
-                {
-                    _filesFound.Add(f);
-                }
-                DirSearch(d);
+                filesFound.AddRange(Directory.GetFiles(d));
+                DirSearch(d, filesFound);
             }
         }
 
         public static string[] RecursiveFileScan(string path)
         {
-            _filesFound = new List<string>();
-            DirSearch(path);
-            return _filesFound.ToArray();
+            List<string> filesFound = new List<string>();
+            DirSearch(path, filesFound);
+            return filesFound.ToArray();
         }
 
         public static string PathSnip(string longpath, string basepath)
@@ -208,56 +144,63 @@ namespace GmodItemExtractor
             return longpath.Substring(basepath.Length + 1);
         }
 
-        private static string[] PickModels()
+        private static GMAFileHeader[] PickModels(GMAFile file)
         {
-            string[] workshopFiles = RecursiveFileScan(_tempPath);
-            string[] workshopModels = workshopFiles.Where(p => Path.GetExtension(p) == ".mdl").ToArray();
-            Pl("Here is a list of all models I found in this addon:");
-            for (int i = 0; i < workshopModels.Length; i++)
-            {
-                Pl("({0}): {1}", i, PathSnip(workshopModels[i], _tempPath));
-            }
-            Pl("\nType in the left-hand-side numbers of the models you're interested in, comma separated (eg: 1,3,7).");
+            GMAFileHeader[] files = file.Files;
+            GMAFileHeader[] workshopModels = files.Where(f => Path.GetExtension(f.Path) == ".mdl").OrderBy(f => f.Path.ToLowerInvariant()).ToArray();
 
-            string[] pickedModels;
+            Pl("Here is a list of all models I found in this addon:");
+            for (int i = 0; i < workshopModels.Length; i++) Pl("({0}): {1}", i, workshopModels[i].Path.ToLowerInvariant());
+
+            Pl("\nType in the left-hand-side numbers of the models you're interested in, comma separated, use dash for ranges (eg: 1,3,7 or 1,3,6-9).");
+
+            List<GMAFileHeader> pickedModels = new List<GMAFileHeader>();
             while (true)
             {
                 string input = Console.ReadLine();
                 if (!string.IsNullOrEmpty(input))
                 {
                     string[] inputSplit = input.Split(',');
-                    pickedModels = new string[inputSplit.Length];
-                    int i = 0;
                     foreach (string snumber in inputSplit)
                     {
-                        int output;
-                        if (int.TryParse(snumber, out output))
+                        MatchCollection regexMatches = Regex.Matches(snumber, @"(\d+)-(\d+)");
+
+                        if (int.TryParse(snumber, out int output))
                         {
                             if (output < 0 || output >= workshopModels.Length)
                             {
                                 Pl($"Invalid index \"{output}\".");
-                                break;
+                                goto PickModelsTryAgain;
                             }
 
-                            pickedModels[i++] = workshopModels[output];
+                            pickedModels.Add(workshopModels[output]);
+                        }
+                        else if (regexMatches.Count > 0)
+                        {
+                            Match m = regexMatches[0];
+                            int start = int.Parse(m.Groups[1].Value);
+                            int end = int.Parse(m.Groups[2].Value);
+                            for (int i = start; i <= end; i++)
+                            {
+                                pickedModels.Add(workshopModels[i]);
+                            }
                         }
                         else
                         {
                             Pl($"Malformed number \"{snumber}\".");
-                            break;
+                            goto PickModelsTryAgain;
                         }
                     }
 
-                    if (i == pickedModels.Length)
-                        break;
+                    break;
                 }
+
+                PickModelsTryAgain:
                 Pl("Try again.");
             }
 
-            return pickedModels;
+            return pickedModels.Distinct(new GMAFileHeaderComparer()).ToArray();
         }
-
-        private static string _tempPath;
 
         private static void Main(string[] args)
         {
@@ -266,7 +209,6 @@ namespace GmodItemExtractor
                 if (Debugger.IsAttached)
                     RunProgram();
                 else
-                {
                     try
                     {
                         RunProgram();
@@ -276,11 +218,12 @@ namespace GmodItemExtractor
                         Console.WriteLine(e.ToString());
                         break;
                     }
-                }
+
                 if (YesNo("Do you want to quit?"))
                     break;
             }
         }
+
         private static void RunProgram()
         {
             _tempPath = Path.Combine(Path.GetTempPath(), "gmoditemextractor");
@@ -297,93 +240,104 @@ namespace GmodItemExtractor
 
             _addonsPath = StartupAddonsPath();
             Pl();
-            _gmoshPath = StartupGmoshPath();
-            Pl();
-            
-GetAddonPath:
-            string addonPath = getAddonPath();
+
+            GetAddonPath:
+            string addonPath = GetAddonPath();
 
             Thread.Sleep(1000);
 
             Pl("Extracting GMA...");
-            GmoshCommand($"-e \"{addonPath}\"", $"\"{_tempPath}\"");
-            
-            if (!Directory.Exists(_tempPath) || Directory.GetDirectories(_tempPath).Length == 0)
-            {
-                Pl("GMA Extraction failed. Try again.");
-                goto GetAddonPath;
-            }
+            GMAFile gmaFile = new GMAFile(addonPath);
 
-PickModels:
-            string[] pickedModels = PickModels();
+            PickModels:
+            GMAFileHeader[] pickedModels = PickModels(gmaFile);
             Pl("Picked models:");
-            foreach (string s in pickedModels)
-            {
-                Pl("{0}", PathSnip(s, _tempPath));
-            }
+            foreach (GMAFileHeader f in pickedModels) Pl("{0}", f.Path);
+
             if (!YesNo("Is this correct?"))
                 goto PickModels;
 
-            List<string> filesToKeep = new List<string>();
-            foreach (string s in pickedModels)
+            List<GMAFileHeader> filesToKeep = new List<GMAFileHeader>();
+            foreach (GMAFileHeader s in pickedModels)
             {
-                //Model files
-                string dirname = Path.GetDirectoryName(s);
-                if (!string.IsNullOrEmpty(dirname))
+                MDLFiles files;
+                try
                 {
-                    filesToKeep.AddRange(Directory.GetFiles(dirname, Path.GetFileNameWithoutExtension(s) + ".*"));
+                    //Textures
+                    files = MDLInfo.GetInfo(gmaFile.GetFileData(s.FileNumber));
+                }
+                catch (CRCMismatchException e)
+                {
+                    Pl(e.Message + " - ignoring");
+                    continue;
                 }
 
-                //Textures
-                MDLFiles files = MDLInfo.GetInfo(s);
+                //Model files
+                GMAFileHeader[] modelFiles = gmaFile.GetModelFiles(s);
+                filesToKeep.AddRange(modelFiles);
 
                 foreach (string locmatpath in files.Paths)
                 {
-                    string matpath = Path.Combine(_tempPath, "materials", locmatpath);
-
-                    if (!Directory.Exists(matpath))
-                        continue;
+                    string matpath = Path.Combine("materials", locmatpath);
 
                     foreach (string vmtname in files.FileNames)
                     {
-                        string vmtpath = Path.Combine(matpath, vmtname + ".vmt");
+                        string vmtpath = CleanPath(Path.Combine(matpath, vmtname + ".vmt"));
 
-                        if (!File.Exists(vmtpath))
+                        GMAFileHeader? file = gmaFile.GetFileByPath(vmtpath);
+                        if (!file.HasValue)
                             continue;
 
-                        filesToKeep.Add(vmtpath);
+                        filesToKeep.Add(file.Value);
 
                         //Finds all VTF files in this VMT file, prepends absolute path, checks if it exists and adds to the list
-                        filesToKeep.AddRange(VMTInfo.GetTextureFiles(File.ReadAllText(vmtpath)).Select(locvtfpath => Path.Combine(_tempPath, locvtfpath)).Where(File.Exists));
+                        try
+                        {
+                            string vmtFile = Encoding.UTF8.GetString(gmaFile.GetFileData(file.Value.FileNumber));
+                            filesToKeep.AddRange(
+                                gmaFile.GetFilesByPaths(
+                                    VMTInfo.GetTextureFiles(vmtFile)
+                                )
+                            );
+                        }
+                        catch (CRCMismatchException e)
+                        {
+                            Pl(e.Message + " - ignoring");
+                        }
                     }
                 }
             }
 
-            //filesToKeep now contains a list of absolute paths to all necessary files. Can contain duplicates.
-            Dictionary<string,bool> dict = new Dictionary<string, bool>();
-            foreach (string s in filesToKeep)
-                dict[s] = true;
+            filesToKeep = filesToKeep.Distinct(new GMAFileHeaderComparer()).ToList();
 
             string addonName = Path.GetFileNameWithoutExtension(addonPath);
             string outputdir = Path.Combine(_addonsPath, $"gie_{addonName}");
 
             Pl("Necessary files:");
-            foreach (KeyValuePair<string, bool> kv in dict)
+            foreach (GMAFileHeader file in filesToKeep)
             {
-                string frompath = kv.Key;
-                string relpath = PathSnip(frompath, _tempPath);
-                string topath = Path.Combine(outputdir, relpath);
-                string topath_folder = Path.GetDirectoryName(topath);
-                Pl(relpath);
+                Pl(file.Path);
+                string topath = Path.Combine(outputdir, file.Path);
+                string topathFolder = Path.GetDirectoryName(topath);
+                if (!Directory.Exists(topathFolder))
+                    Directory.CreateDirectory(topathFolder);
 
-                if (!Directory.Exists(topath_folder))
-                    Directory.CreateDirectory(topath_folder);
-
-                File.Copy(frompath, topath, true);
+                try
+                {
+                    File.WriteAllBytes(topath, gmaFile.GetFileData(file.FileNumber));
+                }
+                catch (CRCMismatchException e)
+                {
+                    Pl(e.Message + " - ignoring");
+                }
             }
 
+            gmaFile.Dispose();
+            gmaFile = null;
+
             Pl($"Files extracted to {outputdir}!");
-            
+
+            goto GetAddonPath;
         }
     }
 }

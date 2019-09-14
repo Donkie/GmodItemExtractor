@@ -43,6 +43,7 @@ namespace GmodItemExtractor
 
                 sb.Append(ch);
             }
+
             return sb.ToString();
         }
 
@@ -115,7 +116,26 @@ namespace GmodItemExtractor
                 Mdl.Read(reader, texOutput, dirOutput);
             }
 
-            return new MDLFiles()
+            return new MDLFiles
+            {
+                Paths = dirOutput.ToArray(),
+                FileNames = texOutput.ToArray()
+            };
+        }
+
+        public static MDLFiles GetInfo(byte[] mdlFile)
+        {
+            List<string> texOutput = new List<string>();
+            List<string> dirOutput = new List<string>();
+            using (MemoryStream stream = new MemoryStream(mdlFile))
+            {
+                using (BinaryReader reader = new BinaryReader(stream))
+                {
+                    Mdl.Read(reader, texOutput, dirOutput);
+                }
+            }
+
+            return new MDLFiles
             {
                 Paths = dirOutput.ToArray(),
                 FileNames = texOutput.ToArray()
